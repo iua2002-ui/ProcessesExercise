@@ -1,0 +1,107 @@
+#include <stdio.h>
+#include <stdlib.h>
+#include <unistd.h>
+#include <sys/wait.h>
+#include <time.h>
+
+#define RANGE_SIZE 10000
+#define NUM_PROCESSES 10
+
+void writeToFile(const char *filename, int start, int end) {
+    FILE *file = fopen(filename, "w");
+    if (file == NULL) {
+        perror("Error opening file");
+        exit(EXIT_FAILURE);
+    }
+
+    for (int i = start; i <= end; i += 2) {
+        fprintf(file, "%d\n", i);
+    }
+
+    fclose(file);
+}
+
+void mergeFiles(const char *outputFilename, const char *inputFilenames[]) {
+    FILE *outputFile = fopen(outputFilename, "w");
+    if (outputFile == NULL) {
+        perror("Error opening output file");
+        exit(EXIT_FAILURE);
+    }
+
+    for (int i = 0; i < NUM_PROCESSES; ++i) {
+        FILE *inputFile = fopen(inputFilenames[i], "r");
+        if (inputFile == NULL) {
+            perror("Error opening input file");
+            exit(EXIT_FAILURE);
+        }
+
+        char buffer[256];
+        while (fgets(buffer, sizeof(buffer), inputFile) != NULL) {
+            fputs(buffer, outputFile);
+        }
+
+        fclose(inputFile);
+    }
+
+    fclose(outputFile);
+}
+
+int main() {
+    struct timespec start, finish;
+    double elapsed;
+
+    clock_gettime(CLOCK_MONOTONIC, &start);
+
+    // Part 1: Single process writing to file 50000 times
+    for (int i = 0; i < 50000; ++i) {
+        writeToFile("output_single_process.txt", 1, 100000);
+    }
+
+    clock_gettime(CLOCK_MONOTONIC, &finish);
+    elapsed = (finish.tv_sec - start.tv_sec) + (finish.tv_nsec - start.tv_nsec) / 1e9;
+    printf("Elapsed time for single process: %f seconds\n", elapsed);
+
+    // Part 2: Multiple processes writing to separate files
+    clock_gettime(CLOCK_MONOTONIC, &start);
+
+    for (int i = 0; i < NUM_PROCESSES; ++i) {
+        pid_t pid = fork();
+
+        if (pid == 0) {
+            int start_range = i * RANGE_SIZE + 1;
+            int end_range = (i + 1) * RANGE_SIZE;
+            char filename[20];
+            sprintf(filename, "output_process_%d.txt", i);
+            writeToFile(filename, start_range, end_range);
+            exit(0);
+        } else if (pid < 0) {
+            perror("Error forking process");
+            exit(EXIT_FAILURE);
+        }
+    }
+
+    // Wait for all child processes to complete
+    for (int i = 0; i < NUM_PROCESSES; ++i) {
+        wait(NULL);
+    }
+
+    clock_gettime(CLOCK_MONOTONIC, &finish);
+    elapsed = (finish.tv_sec - start.tv_sec) + (finish.tv_nsec - start.tv_nsec) / 1e9;
+    printf("Elapsed time for multiple processes: %f seconds\n", elapsed);
+
+    // Part 3: Merge files created by multiple processes into one file
+    const char *inputFilenames[NUM_PROCESSES];
+    for (int i = 0; i < NUM_PROCESSES; ++i) {
+        char filename[20];
+        sprintf(filename, "output_process_%d.txt", i);
+        inputFilenames[i] = filename;
+    }
+
+    clock_gettime(CLOCK_MONOTONIC, &start);
+    mergeFiles("output_combined.txt", inputFilenames);
+    clock_gettime(CLOCK_MONOTONIC, &finish);
+    elapsed = (finish.tv_sec - start.tv_sec) + (finish.tv_nsec - start.tv_nsec) / 1e9;
+    printf("Elapsed time for merging files: %f seconds\n", elapsed);
+
+    return 0;
+}

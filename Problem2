@@ -1,0 +1,146 @@
+#include <unistd.h>
+#include <sys/types.h>
+#include <errno.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <signal.h>
+#include <sys/time.h>  // Added for setitimer
+#include <termios.h>   // Added for non-blocking input
+
+pid_t pid;  // Process ID variable
+
+void handle_sigint(int sig)
+{
+    kill(pid, SIGKILL);  // Terminate the child process
+    printf("\nCannot reset time again - game over\n");
+    exit(0);  // Exit the program
+}
+
+void timer_handler(int sig)
+{
+    printf("\nTime is up! Moving to the next question.\n");
+    kill(pid, SIGKILL);  // Notify the parent about the timeout
+}
+
+void nonblock(int state)
+{
+    struct termios ttystate;
+
+    // Get the terminal state
+    tcgetattr(STDIN_FILENO, &ttystate);
+
+    if (state == 1)
+    {
+        // Turn off canonical mode and echo
+        ttystate.c_lflag &= ~(ICANON | ECHO);
+        // Minimum of number input read.
+        ttystate.c_cc[VMIN] = 1;
+    }
+    else
+    {
+        // Turn on canonical mode and echo
+        ttystate.c_lflag |= (ICANON | ECHO);
+    }
+
+    // Set the terminal attributes
+    tcsetattr(STDIN_FILENO, TCSANOW, &ttystate);
+}
+
+int main(int argc, char **argv)
+{
+    signal(SIGINT, handle_sigint);  // Set up signal handler for SIGINT
+
+    int num_questions;
+    printf("Enter the number of questions in the quiz: ");
+    scanf("%d", &num_questions);
+
+    int correct_answers = 0;
+    int incorrect_answers = 0;
+    int missed_questions = 0;
+
+    srand(time(NULL));  // Seed for random number generation
+
+    // Set up timer
+    struct itimerval timer;
+    timer.it_value.tv_sec = 5;      // Initial timer value in seconds
+    timer.it_value.tv_usec = 0;
+    timer.it_interval.tv_sec = 0;   // Interval for subsequent timers
+    timer.it_interval.tv_usec = 0;
+
+    for (int q = 1; q <= num_questions; ++q)
+    {
+        int operand1 = rand() % 10;  // Random number between 0 and 9
+        int operand2 = rand() % 10;  // Random number between 0 and 9
+        char operator = "+-*"[rand() % 3];  // Randomly select +, -, or *
+
+        int result;
+        switch (operator)
+        {
+        case '+':
+            result = operand1 + operand2;
+            break;
+        case '-':
+            result = operand1 - operand2;
+            break;
+        case '*':
+            result = operand1 * operand2;
+            break;
+        }
+
+        printf("Question %d: %d %c %d = ", q, operand1, operator, operand2);
+
+        nonblock(1);  // Enable non-blocking input
+
+        pid = fork();  // Create a child process
+        if (pid == 0)
+        {
+            // Child process (timer)
+            setitimer(ITIMER_REAL, &timer, NULL);  // Start the timer
+            timer_handler(0);  // Notify parent about the timeout
+            exit(0);  // Exit the child process
+        }
+        else
+        {
+            // Parent process
+            int user_answer;
+            scanf("%d", &user_answer);  // Read user's answer
+
+            // Disable the timer
+            timer.it_value.tv_sec = 0;
+            timer.it_value.tv_usec = 0;
+            setitimer(ITIMER_REAL, &timer, NULL);
+
+            // Check if the answer is correct
+            if (user_answer == result)
+            {
+                printf("Correct!\n");
+                correct_answers++;
+            }
+            else
+            {
+                printf("Incorrect. The correct answer is %d.\n", result);
+                incorrect_answers++;
+            }
+
+            nonblock(0);  // Disable non-blocking input
+
+            // Wait for the timer process to finish
+            int child_status;
+            wait(&child_status);
+
+            // Check if the timer process was terminated due to timeout
+            if (WIFSIGNALED(child_status) && WTERMSIG(child_status) == SIGKILL)
+            {
+                missed_questions++;
+            }
+        }
+    }
+
+    // Print results
+    printf("\nQuiz Results:\n");
+    printf("Correct Answers: %d\n", correct_answers);
+    printf("Incorrect Answers: %d\n", incorrect_answers);
+    printf("Missed Questions: %d\n", missed_questions);
+
+    return 0;  // Exit the program
+}
